@@ -32,12 +32,14 @@ export function attachWebSocketServer(server) {
   });
 
   const interval = setInterval(() => {
-    wss.clients.forEach((socket) => {
-      if (ws.isAlive === false) return ws.terminate();
-
-      ws.isAlive = false;
-      ws.ping();
-    });
+    for (const socket of wss.clients) {
+      if (socket.isAlive === false) {
+        socket.terminate();
+        continue;
+      }
+      socket.isAlive = false;
+      socket.ping();
+    }
   }, 30000);
 
   wss.on("close", () => {
