@@ -1,4 +1,5 @@
 import { WebSocket, WebSocketServer } from "ws";
+import { wsArcjet } from "../arcjet.js";
 
 function sendJson(socket, payload) {
   if (socket.readyState !== WebSocket.OPEN) return;
@@ -21,7 +22,56 @@ export function attachWebSocketServer(server) {
     maxPayload: 1024 * 1024, // 1 MB
   });
 
-  wss.on("connection", (socket) => {
+  server.on("upgrade", async (req, socket, head) => {
+    const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+
+    if (pathname === "/ws") {
+      return;
+    }
+
+    if (wsArcjet) {
+      try {
+        const decision = await wsArcjet.protect(req);
+
+        if (decision.isDenied()) {
+          if (decision.reason.isRateLimit()) {
+            socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
+          } else {
+            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          }
+          socket.destroy();
+          return;
+        }
+      } catch (e) {
+        console.error("WS Upgrade protection error", e);
+        socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    }
+  });
+
+  wss.on("connection", async (socket, req) => {
+    if (wsArcjet) {
+      try {
+        const decision = await wsArcjet.protect(req);
+
+        if (decision.isDenied()) {
+          const code = decision.reason.isRateLimit() ? 1013 : 1008;
+          const reason = decision.reason.isRateLimit()
+            ? "Rate limit exceeded"
+            : "Access denied";
+
+          socket.close(code, reason);
+          return;
+        }
+      } catch (e) {
+        console.error("WS Connection error", e);
+        socket.close(1011, "Server Security Error");
+        return;
+      }
+    }
+
     socket.isAlive = true;
     socket.on("pong", () => {
       socket.isAlive = true;
